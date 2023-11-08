@@ -13,9 +13,8 @@ using Microsoft.Extensions.Logging;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.Diagnostics;
 using Microsoft.SemanticKernel.Orchestration;
+using Microsoft.SemanticKernel.Planners;
 using Microsoft.SemanticKernel.Planning;
-using Microsoft.SemanticKernel.Planning.Sequential;
-using Microsoft.SemanticKernel.SkillDefinition;
 
 namespace CopilotChat.WebApi.Skills.ChatSkills;
 
@@ -84,8 +83,8 @@ public class CopilotChatPlanner
     /// <returns>The plan.</returns>
     public async Task<Plan> CreatePlanAsync(string goal, ILogger logger, CancellationToken cancellationToken = default)
     {
-        FunctionsView plannerFunctionsView = this.Kernel.Skills.GetFunctionsView(true, true);
-        if (plannerFunctionsView.NativeFunctions.IsEmpty && plannerFunctionsView.SemanticFunctions.IsEmpty)
+        var plannerFunctionsView = this.Kernel.Functions.GetFunctionViews();
+        if (plannerFunctionsView.Count == 0)
         {
             // No functions are available - return an empty plan.
             return new Plan(goal);
@@ -102,7 +101,6 @@ public class CopilotChatPlanner
                         this.Kernel,
                         new SequentialPlannerConfig
                         {
-                            RelevancyThreshold = this._plannerOptions?.RelevancyThreshold,
                             // Allow plan to be created with missing functions
                             AllowMissingFunctions = this._plannerOptions?.ErrorHandling.AllowMissingFunctions ?? false
                         }
@@ -128,9 +126,9 @@ public class CopilotChatPlanner
     /// <param name="goal">The goal containing user intent and ask context.</param>
     /// <param name="context">The context to run the plan in.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    public async Task<SKContext> RunStepwisePlannerAsync(string goal, SKContext context, CancellationToken cancellationToken = default)
+    public async Task<FunctionResult> RunStepwisePlannerAsync(string goal, SKContext context, CancellationToken cancellationToken = default)
     {
-        var config = new Microsoft.SemanticKernel.Planning.Stepwise.StepwisePlannerConfig()
+        var config = new StepwisePlannerConfig()
         {
             MaxTokens = this._plannerOptions?.StepwisePlannerConfig.MaxTokens ?? 2048,
             MaxIterations = this._plannerOptions?.StepwisePlannerConfig.MaxIterations ?? 15,
@@ -149,7 +147,7 @@ public class CopilotChatPlanner
             var result = await plan.InvokeAsync(context, cancellationToken: cancellationToken);
 
             sw.Stop();
-            result.Variables.Set("timeTaken", sw.Elapsed.ToString());
+            result.Metadata.Add("timeTaken", sw.Elapsed.ToString());
             return result;
         }
         catch (Exception e)
@@ -168,7 +166,7 @@ public class CopilotChatPlanner
     /// <param name="availableFunctions">The functions available in the planner's kernel.</param>
     /// <param name="logger">Logger from context.</param>
     /// </summary>
-    private Plan SanitizePlan(Plan plan, FunctionsView availableFunctions, ILogger logger)
+    private Plan SanitizePlan(Plan plan, IReadOnlyList<FunctionView> availableFunctions, ILogger logger)
     { // TODO: [Issue #2256] Re-evaluate this logic once we have a better understanding of how to handle missing functions
         List<Plan> sanitizedSteps = new();
         List<string> availableOutputs = new();
@@ -221,7 +219,10 @@ public class CopilotChatPlanner
         Plan sanitizedPlan = new(plan.Description, sanitizedSteps.ToArray<Plan>());
 
         // Merge any parameters back into new plan object
-        sanitizedPlan.Parameters.Update(plan.Parameters);
+        foreach (var p in plan.Parameters)
+        {
+            sanitizedPlan.Parameters.Set(p.Key, p.Value);
+        }
 
         return sanitizedPlan;
     }

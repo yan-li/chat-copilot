@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using Microsoft.Extensions.Logging;
+using Microsoft.SemanticKernel.AI;
 using Microsoft.SemanticKernel.AI.ChatCompletion;
 using Microsoft.SemanticKernel.Connectors.AI.OpenAI.AzureSdk;
 using Microsoft.SemanticKernel.Orchestration;
@@ -66,7 +67,7 @@ public static class TokenUtils
     /// <param name="logger">The logger instance to use for logging errors.</param>
     /// <param name="functionName">Name of the function that invoked the chat completion.</param>
     /// <returns> true if token usage is found in result context; otherwise, false.</returns>
-    internal static void GetFunctionTokenUsage(SKContext result, SKContext chatContext, ILogger logger, string? functionName = null)
+    internal static void GetFunctionTokenUsage(FunctionResult result, SKContext chatContext, ILogger logger, string? functionName = null)
     {
         try
         {
@@ -76,14 +77,14 @@ public static class TokenUtils
                 return;
             }
 
-            if (result.ModelResults == null || result.ModelResults.Count == 0)
+            if (result.Metadata.Count == 0 || !result.TryGetMetadataValue<ModelResult[]?>(AIFunctionResultExtensions.ModelResultsMetadataKey, out ModelResult[]? modelResults))
             {
                 logger.LogError("Unable to determine token usage for {0}", functionKey);
                 return;
             }
 
-            var tokenUsage = result.ModelResults.First().GetResult<ChatModelResult>().Usage.TotalTokens;
-            chatContext.Variables.Set(functionKey!, tokenUsage.ToString(CultureInfo.InvariantCulture));
+            var tokenUsage = (modelResults![0].GetRawResult() as ChatModelResult)!.Usage.TotalTokens;
+            chatContext.Variables.Set(functionKey!, tokenUsage.ToString());
         }
         catch (Exception e)
         {

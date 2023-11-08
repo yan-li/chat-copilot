@@ -19,7 +19,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.Diagnostics;
-using Microsoft.SemanticKernel.Skills.Core;
+using Microsoft.SemanticKernel.Plugins.Core;
 using Microsoft.SemanticMemory;
 
 namespace CopilotChat.WebApi.Extensions;
@@ -181,7 +181,7 @@ internal static class SemanticKernelExtensions
         kernel.RegisterChatSkill(sp);
 
         // Time skill
-        kernel.ImportSkill(new TimeSkill(), nameof(TimeSkill));
+        kernel.ImportSkill(new TimePlugin(), nameof(TimePlugin));
 
         return Task.CompletedTask;
     }

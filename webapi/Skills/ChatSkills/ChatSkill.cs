@@ -22,13 +22,13 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.SemanticKernel;
+using Microsoft.SemanticKernel.AI;
 using Microsoft.SemanticKernel.AI.ChatCompletion;
-using Microsoft.SemanticKernel.AI.TextCompletion;
+using Microsoft.SemanticKernel.Connectors.AI.OpenAI;
 using Microsoft.SemanticKernel.Diagnostics;
 using Microsoft.SemanticKernel.Orchestration;
 using Microsoft.SemanticKernel.Planning;
-using Microsoft.SemanticKernel.SkillDefinition;
-using Microsoft.SemanticKernel.TemplateEngine.Prompt;
+using Microsoft.SemanticKernel.TemplateEngine.Basic;
 using Microsoft.SemanticMemory;
 using ChatCompletionContextMessages = Microsoft.SemanticKernel.AI.ChatCompletion.ChatHistory;
 
@@ -134,9 +134,13 @@ public class ChatSkill
     /// <param name="context">The SKContext.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     [SKFunction, Description("Extract user intent")]
-    [SKParameter("chatId", "Chat ID to extract history from")]
-    [SKParameter("audience", "The audience the chat bot is interacting with.")]
-    public async Task<string> ExtractUserIntentAsync(SKContext context, CancellationToken cancellationToken = default)
+    public async Task<string> ExtractUserIntentAsync(
+        //[SKName("chatId")]
+        //[Description("Chat ID to extract history from")] string chatId,
+        //[SKName("audience")]
+        //[Description("The audience the chat bot is interacting with")] string audience,
+        SKContext context,
+        CancellationToken cancellationToken = default)
     {
         var tokenLimit = this._promptOptions.CompletionTokenLimit;
         var historyTokenBudget =
@@ -157,12 +161,12 @@ public class ChatSkill
 
         var completionFunction = this._kernel.CreateSemanticFunction(
             this._promptOptions.SystemIntentExtraction,
-            skillName: nameof(ChatSkill),
+            pluginName: nameof(ChatSkill),
             description: "Complete the prompt.");
 
         var result = await completionFunction.InvokeAsync(
             intentExtractionContext,
-            settings: this.CreateIntentCompletionSettings(),
+            requestSettings: this.CreateIntentCompletionSettings(),
             cancellationToken
         );
 
@@ -179,8 +183,11 @@ public class ChatSkill
     /// <param name="context">The SKContext.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     [SKFunction, Description("Extract audience list")]
-    [SKParameter("chatId", "Chat ID to extract history from")]
-    public async Task<string> ExtractAudienceAsync(SKContext context, CancellationToken cancellationToken = default)
+    public async Task<string> ExtractAudienceAsync(
+        //[SKName("chatId"), Description("Chat ID to extract history from")]
+        //string chatId,
+        SKContext context,
+        CancellationToken cancellationToken = default)
     {
         var tokenLimit = this._promptOptions.CompletionTokenLimit;
         var historyTokenBudget =
@@ -199,12 +206,12 @@ public class ChatSkill
 
         var completionFunction = this._kernel.CreateSemanticFunction(
             this._promptOptions.SystemAudienceExtraction,
-            skillName: nameof(ChatSkill),
+            pluginName: nameof(ChatSkill),
             description: "Complete the prompt.");
 
         var result = await completionFunction.InvokeAsync(
             audienceExtractionContext,
-            settings: this.CreateIntentCompletionSettings(),
+            requestSettings: this.CreateIntentCompletionSettings(),
             cancellationToken
         );
 
@@ -442,7 +449,7 @@ public class ChatSkill
 
             // Add bot message proposal as prompt context message
             chatContext.Variables.Set("planFunctions", this._externalInformationSkill.FormattedFunctionsString(deserializedPlan.Plan));
-            var promptRenderer = new PromptTemplateEngine();
+            var promptRenderer = new BasicPromptTemplateEngine();
             var proposedPlanBotMessage = await promptRenderer.RenderAsync(
                this._promptOptions.ProposedPlanBotMessage,
                 chatContext,
@@ -635,7 +642,7 @@ public class ChatSkill
     {
         // Render system instruction components
         await this.UpdateBotResponseStatusOnClientAsync(chatId, "Initializing prompt", cancellationToken);
-        var promptRenderer = new PromptTemplateEngine();
+        var promptRenderer = new BasicPromptTemplateEngine();
         return await promptRenderer.RenderAsync(
             this._promptOptions.SystemPersona,
             context,
@@ -861,9 +868,9 @@ public class ChatSkill
     /// <summary>
     /// Create `ChatRequestSettings` for chat response. Parameters are read from the PromptSettings class.
     /// </summary>
-    private ChatRequestSettings CreateChatRequestSettings()
+    private OpenAIRequestSettings CreateChatRequestSettings()
     {
-        return new ChatRequestSettings
+        return new OpenAIRequestSettings
         {
             MaxTokens = this._promptOptions.ResponseTokenLimit,
             Temperature = this._promptOptions.ResponseTemperature,
@@ -876,9 +883,9 @@ public class ChatSkill
     /// <summary>
     /// Create `CompleteRequestSettings` for intent response. Parameters are read from the PromptSettings class.
     /// </summary>
-    private CompleteRequestSettings CreateIntentCompletionSettings()
+    private AIRequestSettings CreateIntentCompletionSettings()
     {
-        return new CompleteRequestSettings
+        return new OpenAIRequestSettings
         {
             MaxTokens = this._promptOptions.ResponseTokenLimit,
             Temperature = this._promptOptions.IntentTemperature,

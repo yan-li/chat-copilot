@@ -15,14 +15,15 @@ using CopilotChat.WebApi.Options;
 using CopilotChat.WebApi.Skills.OpenApiPlugins.GitHubPlugin.Model;
 using CopilotChat.WebApi.Skills.OpenApiPlugins.JiraPlugin.Model;
 using CopilotChat.WebApi.Skills.Utils;
+using DocumentFormat.OpenXml.Drawing.Diagrams;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.Orchestration;
+using Microsoft.SemanticKernel.Planners;
 using Microsoft.SemanticKernel.Planning;
-using Microsoft.SemanticKernel.Planning.Stepwise;
-using Microsoft.SemanticKernel.SkillDefinition;
-using Microsoft.SemanticKernel.TemplateEngine.Prompt;
+using Microsoft.SemanticKernel.TemplateEngine.Basic;
 
 namespace CopilotChat.WebApi.Skills.ChatSkills;
 
@@ -94,16 +95,16 @@ public class ExternalInformationSkill
     /// </summary>
     /// <param name="cancellationToken">The cancellation token.</param>
     [SKFunction, Description("Acquire external information")]
-    [SKParameter("tokenLimit", "Maximum number of tokens")]
-    [SKParameter("proposedPlan", "Previously proposed plan that is approved")]
     public async Task<string> InvokePlannerAsync(
+        //[SKName("tokenLimit"), Description("Maximum number of tokens")] string tokenLimit,
+        //[SKName("proposedPlan"), Description("Previously proposed plan that is approved")] ProposedPlan? proposedPlan,
         [Description("The intent to whether external information is needed")] string userIntent,
         SKContext context,
         CancellationToken cancellationToken = default)
     {
         // TODO: [Issue #2106] Calculate planner and plan token usage
-        FunctionsView functions = this._planner.Kernel.Skills.GetFunctionsView(true, true);
-        if (functions.NativeFunctions.IsEmpty && functions.SemanticFunctions.IsEmpty)
+        var functions = this._planner.Kernel.Functions.GetFunctionViews();
+        if (functions.Count == 0)
         {
             return string.Empty;
         }
@@ -169,12 +170,12 @@ public class ExternalInformationSkill
         CancellationToken cancellationToken = default)
     {
         // Reload the plan with the planner's kernel so it has full context to be executed
-        var newPlanContext = new SKContext(null, this._planner.Kernel.Skills, this._planner.Kernel.LoggerFactory);
+        var newPlanContext = this._planner.Kernel.CreateNewContext();
         string planJson = JsonSerializer.Serialize(plan);
-        plan = Plan.FromJson(planJson, newPlanContext);
+        plan = Plan.FromJson(planJson, this._planner.Kernel.Functions);
 
         // Invoke plan
-        newPlanContext = await plan.InvokeAsync(newPlanContext, cancellationToken: cancellationToken);
+        var functionResult = await plan.InvokeAsync(newPlanContext, cancellationToken: cancellationToken);
         var functionsUsed = $"FUNCTIONS USED: {this.FormattedFunctionsString(plan)}";
 
         // TODO: #2581 Account for planner system instructions
@@ -184,7 +185,7 @@ public class ExternalInformationSkill
 
         // The result of the plan may be from an OpenAPI skill. Attempt to extract JSON from the response.
         bool extractJsonFromOpenApi =
-            this.TryExtractJsonFromOpenApiPlanResult(newPlanContext, newPlanContext.Result, out string planResult);
+            this.TryExtractJsonFromOpenApiPlanResult(functionResult.GetValue<string>(), out string planResult);
         if (extractJsonFromOpenApi)
         {
             planResult = this.OptimizeOpenApiSkillJson(planResult, tokenLimit, plan);
@@ -236,7 +237,7 @@ public class ExternalInformationSkill
     private async Task<string> RunStepwisePlannerAsync(string goal, SKContext context, CancellationToken cancellationToken)
     {
         var plannerContext = context.Clone();
-        plannerContext = await this._planner.RunStepwisePlannerAsync(goal, context, cancellationToken);
+        var executionResult = await this._planner.RunStepwisePlannerAsync(goal, context, cancellationToken);
 
         // Populate the execution metadata.
         var plannerResult = plannerContext.Variables.Input.Trim();
@@ -267,7 +268,7 @@ public class ExternalInformationSkill
         }
 
         // Render the supplement to guide the model in using the result.
-        var promptRenderer = new PromptTemplateEngine();
+        var promptRenderer = new BasicPromptTemplateEngine();
         var resultSupplement = await promptRenderer.RenderAsync(
             this._promptOptions.StepwisePlannerSupplement,
             plannerContext,
@@ -298,7 +299,7 @@ public class ExternalInformationSkill
     /// <summary>
     /// Try to extract json from the planner response as if it were from an OpenAPI skill.
     /// </summary>
-    private bool TryExtractJsonFromOpenApiPlanResult(SKContext context, string openApiSkillResponse, out string json)
+    private bool TryExtractJsonFromOpenApiPlanResult(string openApiSkillResponse, out string json)
     {
         try
         {
