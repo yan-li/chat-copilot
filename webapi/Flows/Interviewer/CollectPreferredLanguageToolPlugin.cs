@@ -49,7 +49,6 @@ public sealed class CollectPreferredLanguageToolPlugin
         [SKName("programming_language")][Description("The programming language the user intends to use")] string programming_language,
         SKContext context)
     {
-        //Console.WriteLine("<======= Creating CollectPreferredLanguageTool chat =======>\n");
         var chat = this._chat.CreateNewChat(SystemPrompt);
         chat.AddUserMessage(Goal);
 
@@ -59,18 +58,13 @@ public sealed class CollectPreferredLanguageToolPlugin
             chat.Messages.AddRange(chatHistory);
         }
 
-        //Console.WriteLine("000");
         if (!string.IsNullOrEmpty(programming_language))
         {
-            //  Console.WriteLine($"111 {programming_language} programming_language");
             context.Variables["programming_language"] = programming_language;
             return programming_language;
         }
-        //Console.WriteLine($"222 {programming_language} programming_language");
 
         context.PromptInput();
-        //Console.WriteLine($"333 {programming_language} programming_language");
-
         return await this._chat.GenerateMessageAsync(chat, this._chatRequestSettings).ConfigureAwait(false);
     }
 }

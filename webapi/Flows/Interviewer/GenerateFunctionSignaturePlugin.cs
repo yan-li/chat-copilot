@@ -62,7 +62,6 @@ Provide the function signature to the user.";
         [SKName("function_signature")][Description("The function signature generated based on user's programming language")] string function_signature,
         SKContext context)
     {
-        //Console.WriteLine("<======= Creating GenerateFunctionSignature chat =======>\n");
         var chat = this._chat.CreateNewChat(SystemPrompt);
         chat.AddUserMessage(Goal);
 
@@ -75,10 +74,11 @@ Provide the function signature to the user.";
         if (!string.IsNullOrEmpty(function_signature))
         {
             context.Variables["function_signature"] = function_signature;
-            Console.WriteLine("Assistant: Here's a function signature you could use to implement your final solution: \n" + function_signature);
-            return "Assistant: Here's a function signature you could use to implement your final solution: \n" + function_signature;
+            context.PromptInput();
+
+            return "Here's a function signature you could use to implement your final solution: \n" + function_signature;
         }
 
-        return "Assistant: Here's a function signature you could use to implement your final solution: \n" + await this._chat.GenerateMessageAsync(chat, this._chatRequestSettings).ConfigureAwait(false);
+        return "Here's a function signature you could use to implement your final solution: \n" + await this._chat.GenerateMessageAsync(chat, this._chatRequestSettings).ConfigureAwait(false);
     }
 }

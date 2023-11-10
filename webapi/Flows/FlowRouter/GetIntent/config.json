@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "description": "Given a request or command or goal from a user and a list of action names with their descriptions, analyze the data and provide the most appropiate action name that maps to the user's intent.",
+  "type": "completion",
+  "completion": {
+    "max_tokens": 1024,
+    "temperature": 0,
+    "top_p": 1,
+    "presence_penalty": 0,
+    "frequency_penalty": 0
+  },
+  "input": {
+    "parameters": [
+      {
+        "name": "input",
+        "description": "The user's request.",
+        "defaultValue": ""
+      },
+      {
+        "name": "delimiter",
+        "description": "The delimiter used in the user's request.",
+        "defaultValue": ""
+      },
+      {
+        "name": "descriptions",
+        "description": "JSON object where the key represents the action name and the value is the action description.",
+        "defaultValue": ""
+      },
+      {
+        "name": "examples",
+        "description": "Examples of user requests and the expected result (action names).",
+        "defaultValue": ""
+      },
+      {
+        "name": "defaultAnswer",
+        "description": "The answer to respond with if the user's request does not match any action.",
+        "defaultValue": ""
+      }
+    ]
+  }
+}

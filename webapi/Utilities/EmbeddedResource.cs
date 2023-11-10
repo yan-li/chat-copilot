@@ -1,12 +1,15 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-namespace CopilotChat.WebApi.Utilities;
-
-using System.Collections.Generic;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+
+// ReSharper disable once CheckNamespace
+#pragma warning disable IDE0130 // Namespace does not match folder structure
+namespace CopilotChat.WebApi;
+#pragma warning restore IDE0130 // Namespace does not match folder structure
 
 internal static class EmbeddedResource
 {

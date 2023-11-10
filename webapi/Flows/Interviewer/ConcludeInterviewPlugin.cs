@@ -78,13 +78,9 @@ Assistant:
         [SKName("interview_decision")][Description("interview decision for user")] string interview_decision,
         SKContext context)
     {
-        //Console.WriteLine("<======= Creating GiveFeedback chat =======>\n");
-
         context.Variables.TryGetValue("_solution_code_implementation", out string solution);
-
         context.Variables["_solution_code_implementation"] = solution;
 
-        //Console.WriteLine($"5555555555 {context.Variables["_solution_code_implementation"]} 555555555");
         var chat = this._chat.CreateNewChat(SystemPrompt);
         chat.AddUserMessage(Goal);
 
@@ -112,10 +108,10 @@ Assistant:
         if (feedbackProvided && interviewDecisionProvided)
         {
             context.PromptInput();
-            return "Assistant: " + context.Variables["feedback"]
+            return context.Variables["feedback"]
                  + "\nDecision is: " + context.Variables["interview_decision"];
         }
 
-        return "Assistant: " + await this._chat.GenerateMessageAsync(chat, this._chatRequestSettings).ConfigureAwait(false);
+        return await this._chat.GenerateMessageAsync(chat, this._chatRequestSettings).ConfigureAwait(false);
     }
 }

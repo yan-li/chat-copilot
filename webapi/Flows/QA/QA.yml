@@ -1,0 +1,20 @@
+name: QA
+goal: answer
+steps:
+  - goal: Answer the question from user
+    plugins:
+      - WebSearchEnginePlugin
+      - LanguageCalculatorPlugin
+    requires:
+      - input
+    provides:
+      - answer
+  - goal: Rephrase the answer
+    plugins:
+      - RephrasePlugin
+    requires:
+      - answer
+    provides:
+      - output
+provides:
+    - output

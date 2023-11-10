@@ -6,12 +6,12 @@ using System.ComponentModel;
 using System.Globalization;
 using System.Linq;
 using System.Net;
-using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using CopilotChat.WebApi.Auth;
+using CopilotChat.WebApi.Flows.FlowRouter;
 using CopilotChat.WebApi.Hubs;
 using CopilotChat.WebApi.Models.Response;
 using CopilotChat.WebApi.Models.Storage;
@@ -103,6 +103,11 @@ public class ChatSkill
     private readonly IFlowCatalog _flowCatalog;
 
     /// <summary>
+    /// Flow router
+    /// </summary>
+    private readonly FlowRouter _flowRouter;
+
+    /// <summary>
     /// Flow orchestrator
     /// </summary>
     private readonly FlowOrchestrator _flowOrchestrator;
@@ -120,6 +125,7 @@ public class ChatSkill
         IOptions<DocumentMemoryOptions> documentImportOptions,
         CopilotChatPlanner planner,
         IFlowCatalog flowCatalog,
+        FlowRouter flowRouter,
         FlowOrchestrator flowOrchestrator,
         ILogger logger,
         AzureContentSafety? contentSafety = null)
@@ -146,6 +152,7 @@ public class ChatSkill
         this._contentSafety = contentSafety;
 
         this._flowCatalog = flowCatalog;
+        this._flowRouter = flowRouter;
         this._flowOrchestrator = flowOrchestrator;
     }
 
@@ -375,6 +382,7 @@ public class ChatSkill
         }
         else
         {
+            // TODO: fix usage token
             this._logger.LogWarning("ChatSkill.ChatAsync token usage unknown. Ensure token management has been implemented correctly.");
         }
 
@@ -550,17 +558,27 @@ public class ChatSkill
 
     private async Task<ChatMessage> GetChatResponseV2Async(string chatId, string userId, SKContext chatContext, ChatMessage userMessage, CancellationToken cancellationToken)
     {
-        var flow = await this.GetFlowAsync(chatId, userId, userMessage, cancellationToken);
+        var flowSession = this._flowRouter.GetInProgressFlowSession(chatId);
+        if (flowSession == null)
+        {
+            var flow = await this.GetFlowAsync(chatId, userId, userMessage, cancellationToken);
+            flowSession = this._flowRouter.StartFlow(chatId, flow);
+            await this.UpdateBotResponseStatusOnClientAsync(chatId, $"Flow {flowSession.Flow.Name} has started..", cancellationToken);
+        }
 
         List<string> copilotMessages = new();
         try
         {
-            await this.UpdateBotResponseStatusOnClientAsync(chatId, $"Executing flow {flow.Name}", cancellationToken);
-            ContextVariables result = await this._flowOrchestrator.ExecuteFlowAsync(flow, chatId, userMessage.Content, chatContext.Variables).ConfigureAwait(false);
+            var variables = chatContext.Variables.Clone();
+            await this.UpdateBotResponseStatusOnClientAsync(chatId, $"Executing flow {flowSession.Flow.Name}", cancellationToken);
+            ContextVariables result = await this._flowOrchestrator.ExecuteFlowAsync(flowSession.Flow, flowSession.SessionId, userMessage.Content, variables).ConfigureAwait(false);
             copilotMessages.AddRange(JsonSerializer.Deserialize<List<string>>(result.ToString())!);
 
-            // Handle flow completes
-            // handle terminated flow
+            if (result.IsComplete(flowSession.Flow) || result.IsTerminateFlow())
+            {
+                await this.UpdateBotResponseStatusOnClientAsync(chatId, $"Flow {flowSession.Flow.Name} has completed..", cancellationToken);
+                this._flowRouter.CompleteFlow(chatId, flowSession.SessionId);
+            }
         }
         catch (HttpOperationException ex)
         {
@@ -596,6 +614,7 @@ public class ChatSkill
                 cancellationToken
             );
             await this.UpdateMessageOnClient(chatMessage, cancellationToken);
+            await this._chatMessageRepository.UpsertAsync(chatMessage!);
         }
 
         // return the last one?
@@ -604,8 +623,10 @@ public class ChatSkill
 
     private async Task<Flow> GetFlowAsync(string chatId, string userId, ChatMessage userMessage, CancellationToken cancellationToken)
     {
-        // TODO: flow detection/switching logic
-        return await this._flowCatalog.GetFlowAsync("Interviewer") ?? throw new InvalidOperationException("Flow Interviewer not found");
+        // TODO: flow switching logic
+        string flowName = await this._flowRouter.GetFlowIntentAsync(userMessage.Content, cancellationToken);
+
+        return await this._flowCatalog.GetFlowAsync(flowName) ?? throw new InvalidOperationException($"Flow {flowName} not found");
     }
 
     /// <summary>

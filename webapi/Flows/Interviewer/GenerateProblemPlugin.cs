@@ -44,7 +44,6 @@ public sealed class GenerateProblemPlugin
         [SKName("problem_statement")][Description("The coding problem prompt")] string problem,
         SKContext context)
     {
-        //Console.WriteLine("<======= Creating GenerateProblem chat =======>\n");
         var chat = this._chat.CreateNewChat(SystemPrompt);
         chat.AddUserMessage(Goal);
 

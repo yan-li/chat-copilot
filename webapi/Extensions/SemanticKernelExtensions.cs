@@ -7,6 +7,7 @@ using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
 using CopilotChat.WebApi.Flows;
+using CopilotChat.WebApi.Flows.FlowRouter;
 using CopilotChat.WebApi.Hubs;
 using CopilotChat.WebApi.Models.Response;
 using CopilotChat.WebApi.Options;
@@ -14,6 +15,7 @@ using CopilotChat.WebApi.Services;
 using CopilotChat.WebApi.Skills.ChatSkills;
 using CopilotChat.WebApi.Storage;
 using CopilotChat.WebApi.Utilities;
+using DocumentFormat.OpenXml.Office2016.Drawing.ChartDrawing;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Configuration;
@@ -26,6 +28,8 @@ using Microsoft.SemanticKernel.Experimental.Orchestration;
 using Microsoft.SemanticKernel.Experimental.Orchestration.Abstractions;
 using Microsoft.SemanticKernel.Plugins.Core;
 using Microsoft.SemanticKernel.Plugins.Memory;
+using Microsoft.SemanticKernel.Plugins.Web;
+using Microsoft.SemanticKernel.Plugins.Web.Bing;
 using Microsoft.SemanticMemory;
 
 namespace CopilotChat.WebApi.Extensions;
@@ -115,7 +119,7 @@ internal static class SemanticKernelExtensions
 
     public static WebApplicationBuilder AddFlowOrchestratorServices(this WebApplicationBuilder builder)
     {
-        builder.Services.AddScoped<IFlowCatalog>(sp =>
+        builder.Services.AddSingleton<IFlowCatalog>(sp =>
         {
             var fileContents = EmbeddedResource.ReadFileTypes(".yml");
 
@@ -129,6 +133,13 @@ internal static class SemanticKernelExtensions
             return new InMemoryFlowCatalog(flows);
         });
 
+        builder.Services.AddSingleton(sp =>
+        {
+            var provider = sp.GetRequiredService<SemanticKernelProvider>();
+            var kernelBuilder = provider.GetOrchestratorKernelBuilder();
+            return new FlowRouter(kernelBuilder.Build());
+        });
+
         // TODO: revisit the scope here
         builder.Services.AddSingleton<FlowOrchestrator>(sp =>
         {
@@ -136,6 +147,12 @@ internal static class SemanticKernelExtensions
             var kernelBuilder = provider.GetOrchestratorKernelBuilder();
 
             Dictionary<object, string?> plugins = new(); // reserved for customized plugins
+
+            IConfiguration configuration = sp.GetRequiredService<IConfiguration>();
+            var bingOptions = configuration.GetSection(BingOptions.PropertyName).Get<BingOptions>() ?? throw new SKException("Bing option not found");
+            var bingConnector = new BingConnector(bingOptions.ApiKey);
+            var webSearchEnginePlugin = new WebSearchEnginePlugin(bingConnector);
+            plugins.Add(webSearchEnginePlugin, "WebSearch");
             return new(
                 kernelBuilder,
                 FlowStatusProvider.ConnectAsync(new VolatileMemoryStore()).Result,
@@ -201,6 +218,7 @@ internal static class SemanticKernelExtensions
                 contentSafety: sp.GetService<AzureContentSafety>(),
                 planner: sp.GetRequiredService<CopilotChatPlanner>(),
                 flowCatalog: sp.GetRequiredService<IFlowCatalog>(),
+                flowRouter: sp.GetRequiredService<FlowRouter>(),
                 flowOrchestrator: sp.GetRequiredService<FlowOrchestrator>(),
                 logger: sp.GetRequiredService<ILogger<ChatSkill>>()),
             nameof(ChatSkill));

@@ -44,3 +44,6 @@ steps:
     provides:
       - interview_analysis
       - decision
+provides:
+  - interview_analysis
+  - decision
