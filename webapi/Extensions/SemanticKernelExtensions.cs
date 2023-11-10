@@ -1,16 +1,19 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
+using CopilotChat.WebApi.Flows;
 using CopilotChat.WebApi.Hubs;
 using CopilotChat.WebApi.Models.Response;
 using CopilotChat.WebApi.Options;
 using CopilotChat.WebApi.Services;
 using CopilotChat.WebApi.Skills.ChatSkills;
 using CopilotChat.WebApi.Storage;
+using CopilotChat.WebApi.Utilities;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Configuration;
@@ -19,7 +22,10 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.Diagnostics;
+using Microsoft.SemanticKernel.Experimental.Orchestration;
+using Microsoft.SemanticKernel.Experimental.Orchestration.Abstractions;
 using Microsoft.SemanticKernel.Plugins.Core;
+using Microsoft.SemanticKernel.Plugins.Memory;
 using Microsoft.SemanticMemory;
 
 namespace CopilotChat.WebApi.Extensions;
@@ -107,6 +113,39 @@ internal static class SemanticKernelExtensions
         return builder;
     }
 
+    public static WebApplicationBuilder AddFlowOrchestratorServices(this WebApplicationBuilder builder)
+    {
+        builder.Services.AddScoped<IFlowCatalog>(sp =>
+        {
+            var fileContents = EmbeddedResource.ReadFileTypes(".yml");
+
+            var flows = new List<Flow>();
+            foreach (var content in fileContents)
+            {
+                var flow = FlowSerializer.DeserializeFromYaml(content);
+                flows.Add(flow);
+            }
+
+            return new InMemoryFlowCatalog(flows);
+        });
+
+        // TODO: revisit the scope here
+        builder.Services.AddSingleton<FlowOrchestrator>(sp =>
+        {
+            var provider = sp.GetRequiredService<SemanticKernelProvider>();
+            var kernelBuilder = provider.GetOrchestratorKernelBuilder();
+
+            Dictionary<object, string?> plugins = new(); // reserved for customized plugins
+            return new(
+                kernelBuilder,
+                FlowStatusProvider.ConnectAsync(new VolatileMemoryStore()).Result,
+                plugins,
+                config: new FlowOrchestratorConfig() { MaxStepIterations = 30 });
+        });
+
+        return builder;
+    }
+
     /// <summary>
     /// Add Planner services
     /// </summary>
@@ -150,7 +189,7 @@ internal static class SemanticKernelExtensions
     public static IKernel RegisterChatSkill(this IKernel kernel, IServiceProvider sp)
     {
         // Chat skill
-        kernel.ImportSkill(
+        kernel.ImportFunctions(
             new ChatSkill(
                 kernel,
                 memoryClient: sp.GetRequiredService<ISemanticMemoryClient>(),
@@ -161,6 +200,8 @@ internal static class SemanticKernelExtensions
                 documentImportOptions: sp.GetRequiredService<IOptions<DocumentMemoryOptions>>(),
                 contentSafety: sp.GetService<AzureContentSafety>(),
                 planner: sp.GetRequiredService<CopilotChatPlanner>(),
+                flowCatalog: sp.GetRequiredService<IFlowCatalog>(),
+                flowOrchestrator: sp.GetRequiredService<FlowOrchestrator>(),
                 logger: sp.GetRequiredService<ILogger<ChatSkill>>()),
             nameof(ChatSkill));
 
@@ -181,7 +222,7 @@ internal static class SemanticKernelExtensions
         kernel.RegisterChatSkill(sp);
 
         // Time skill
-        kernel.ImportSkill(new TimePlugin(), nameof(TimePlugin));
+        kernel.ImportFunctions(new TimePlugin(), nameof(TimePlugin));
 
         return Task.CompletedTask;
     }

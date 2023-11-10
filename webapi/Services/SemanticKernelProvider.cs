@@ -40,7 +40,7 @@ public sealed class SemanticKernelProvider
     /// </summary>
     public IKernel GetCompletionKernel()
     {
-        var builder = Kernel.Builder.WithLoggerFactory(this._serviceProvider.GetRequiredService<ILoggerFactory>());
+        var builder = new KernelBuilder().WithLoggerFactory(this._serviceProvider.GetRequiredService<ILoggerFactory>());
 
         this.WithCompletionBackend(builder);
 
@@ -52,7 +52,7 @@ public sealed class SemanticKernelProvider
     /// </summary>
     public IKernel GetPlannerKernel()
     {
-        var builder = Kernel.Builder.WithLoggerFactory(this._serviceProvider.GetRequiredService<ILoggerFactory>());
+        var builder = new KernelBuilder().WithLoggerFactory(this._serviceProvider.GetRequiredService<ILoggerFactory>());
 
         this.WithPlannerBackend(builder);
 
@@ -64,12 +64,41 @@ public sealed class SemanticKernelProvider
     /// </summary>
     public IKernel GetMigrationKernel()
     {
-        var builder = Kernel.Builder.WithLoggerFactory(this._serviceProvider.GetRequiredService<ILoggerFactory>());
+        var builder = new KernelBuilder().WithLoggerFactory(this._serviceProvider.GetRequiredService<ILoggerFactory>());
 
         this.WithEmbeddingBackend(builder);
         this.WithSemanticTextMemory(builder);
 
         return builder.Build();
+    }
+
+    public KernelBuilder GetOrchestratorKernelBuilder()
+    {
+        var builder = new KernelBuilder()
+            .WithLoggerFactory(this._serviceProvider.GetRequiredService<ILoggerFactory>())
+            .WithRetryBasic(new()
+            {
+                MaxRetryCount = 3,
+                UseExponentialBackoff = true,
+                MinRetryDelay = TimeSpan.FromSeconds(3),
+            });
+
+        var memoryOptions = this._serviceProvider.GetRequiredService<IOptions<SemanticMemoryConfig>>().Value;
+
+        switch (memoryOptions.TextGeneratorType)
+        {
+            case { } x when x.Equals("AzureOpenAI", StringComparison.OrdinalIgnoreCase):
+            case { } y when y.Equals("AzureOpenAIText", StringComparison.OrdinalIgnoreCase):
+                var azureAIOptions = memoryOptions.GetServiceConfig<AzureOpenAIConfig>(this._configuration, "AzureOpenAIText");
+                return builder.WithAzureChatCompletionService(azureAIOptions.Deployment, azureAIOptions.Endpoint, azureAIOptions.APIKey, true);
+
+            case { } x when x.Equals("OpenAI", StringComparison.OrdinalIgnoreCase):
+                var openAIOptions = memoryOptions.GetServiceConfig<OpenAIConfig>(this._configuration, "OpenAI");
+                return builder.WithOpenAIChatCompletionService(openAIOptions.TextModel, openAIOptions.APIKey);
+
+            default:
+                throw new ArgumentException($"Invalid {nameof(memoryOptions.TextGeneratorType)} value in 'SemanticMemory' settings.");
+        }
     }
 
     /// <summary>

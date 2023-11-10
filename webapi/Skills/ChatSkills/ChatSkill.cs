@@ -5,6 +5,8 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Globalization;
 using System.Linq;
+using System.Net;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -26,8 +28,11 @@ using Microsoft.SemanticKernel.AI;
 using Microsoft.SemanticKernel.AI.ChatCompletion;
 using Microsoft.SemanticKernel.Connectors.AI.OpenAI;
 using Microsoft.SemanticKernel.Diagnostics;
+using Microsoft.SemanticKernel.Experimental.Orchestration;
+using Microsoft.SemanticKernel.Experimental.Orchestration.Abstractions;
 using Microsoft.SemanticKernel.Orchestration;
 using Microsoft.SemanticKernel.Planning;
+using Microsoft.SemanticKernel.TemplateEngine;
 using Microsoft.SemanticKernel.TemplateEngine.Basic;
 using Microsoft.SemanticMemory;
 using ChatCompletionContextMessages = Microsoft.SemanticKernel.AI.ChatCompletion.ChatHistory;
@@ -91,6 +96,17 @@ public class ChatSkill
     /// </summary>
     private readonly AzureContentSafety? _contentSafety = null;
 
+
+    /// <summary>
+    /// Flow catalog
+    /// </summary>
+    private readonly IFlowCatalog _flowCatalog;
+
+    /// <summary>
+    /// Flow orchestrator
+    /// </summary>
+    private readonly FlowOrchestrator _flowOrchestrator;
+
     /// <summary>
     /// Create a new instance of <see cref="ChatSkill"/>.
     /// </summary>
@@ -103,6 +119,8 @@ public class ChatSkill
         IOptions<PromptsOptions> promptOptions,
         IOptions<DocumentMemoryOptions> documentImportOptions,
         CopilotChatPlanner planner,
+        IFlowCatalog flowCatalog,
+        FlowOrchestrator flowOrchestrator,
         ILogger logger,
         AzureContentSafety? contentSafety = null)
     {
@@ -126,6 +144,9 @@ public class ChatSkill
             planner,
             logger);
         this._contentSafety = contentSafety;
+
+        this._flowCatalog = flowCatalog;
+        this._flowOrchestrator = flowOrchestrator;
     }
 
     /// <summary>
@@ -345,7 +366,7 @@ public class ChatSkill
         var chatContext = context.Clone();
         chatContext.Variables.Set("knowledgeCutoff", this._promptOptions.KnowledgeCutoffDate);
 
-        ChatMessage chatMessage = await this.GetChatResponseAsync(chatId, userId, chatContext, newUserMessage, cancellationToken);
+        ChatMessage chatMessage = await this.GetChatResponseV2Async(chatId, userId, chatContext, newUserMessage, cancellationToken);
         context.Variables.Update(chatMessage.Content);
 
         if (chatMessage.TokenUsage != null)
@@ -526,6 +547,66 @@ public class ChatSkill
     }
 
     #region Private
+
+    private async Task<ChatMessage> GetChatResponseV2Async(string chatId, string userId, SKContext chatContext, ChatMessage userMessage, CancellationToken cancellationToken)
+    {
+        var flow = await this.GetFlowAsync(chatId, userId, userMessage, cancellationToken);
+
+        List<string> copilotMessages = new();
+        try
+        {
+            await this.UpdateBotResponseStatusOnClientAsync(chatId, $"Executing flow {flow.Name}", cancellationToken);
+            ContextVariables result = await this._flowOrchestrator.ExecuteFlowAsync(flow, chatId, userMessage.Content, chatContext.Variables).ConfigureAwait(false);
+            copilotMessages.AddRange(JsonSerializer.Deserialize<List<string>>(result.ToString())!);
+
+            // Handle flow completes
+            // handle terminated flow
+        }
+        catch (HttpOperationException ex)
+        {
+            if (ex.StatusCode == HttpStatusCode.BadRequest &&
+                (ex.ResponseContent?.Contains("content_filter") ?? false))
+            {
+                this._logger.LogWarning(ex, "Input filtered by Content Filter.");
+                copilotMessages.Add("Sorry the content doesn't conform to Microsoft policy.");
+            }
+            else
+            {
+                throw;
+            }
+        }
+        catch (SKException ex) when (ex.Message.StartsWith("Failed to"))
+        {
+            this._logger.LogError(ex, "Failed to execute the flow");
+            copilotMessages.Add("Sorry we are not able to recognize your requirement.");
+        }
+
+        // Stream the response to the client
+        ChatMessage chatMessage = null;
+        foreach (var response in copilotMessages)
+        {
+            var plannerDetails = new SemanticDependency<PlanExecutionMetadata>(response, null, "");
+            var promptDetails =
+                new BotResponsePrompt("", "", userMessage.Content, "", plannerDetails, "", new ChatHistory());
+            chatMessage = await this.CreateBotMessageOnClient(
+                chatId,
+                userId,
+                JsonSerializer.Serialize(promptDetails),
+                response,
+                cancellationToken
+            );
+            await this.UpdateMessageOnClient(chatMessage, cancellationToken);
+        }
+
+        // return the last one?
+        return chatMessage;
+    }
+
+    private async Task<Flow> GetFlowAsync(string chatId, string userId, ChatMessage userMessage, CancellationToken cancellationToken)
+    {
+        // TODO: flow detection/switching logic
+        return await this._flowCatalog.GetFlowAsync("Interviewer") ?? throw new InvalidOperationException("Flow Interviewer not found");
+    }
 
     /// <summary>
     /// Generate the necessary chat context to create a prompt then invoke the model to get a response.
